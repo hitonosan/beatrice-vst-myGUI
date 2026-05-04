@@ -467,20 +467,7 @@ void Editor::SyncModelDescription() {
   voice_combobox->removeAllEntry();
 
   if (voice_buttons_view_) {
-    // Snapshot切替などで、Voice数が多いモデルから少ないモデルへ変わる場合、
-    // CScrollView::removeAll(true) だけでは古いVoiceButtonが描画上残ることがある。
-    // 追加済みのVoiceButtonをポインタで明示的に外してから、スクロール領域も初期化する。
-    for (auto* const button : voice_buttons_) {
-      if (button) {
-        voice_buttons_view_->removeView(button, true);
-      }
-    }
-
-    auto container_size = voice_buttons_view_->getContainerSize();
-    container_size.setHeight(0);
-    voice_buttons_view_->setContainerSize(container_size);
-    voice_buttons_view_->resetScrollOffset();
-    voice_buttons_view_->invalid();
+    voice_buttons_view_->removeAll(true);
   }
 
   voice_buttons_.clear();
@@ -650,7 +637,6 @@ void Editor::SyncModelDescription() {
 
       voice_buttons_view_->setContainerSize(container_size);
       voice_buttons_view_->setDirty();
-      voice_buttons_view_->invalid();
     }
 
     for (auto i = 0; i < common::kMaxNSpeakers; ++i) {
@@ -786,38 +772,6 @@ void Editor::valueChanged(CControl* const pControl) {
 
     auto* const hidden_voice_control = controls_.at(voice_vst_param_id);
 
-    const auto send_plain_int_change = [&controller](const ParamID param_id,
-                                                     const int value) {
-      auto* const msg = controller->allocateMessage();
-
-      msg->setMessageID("plain_param_change");
-
-      msg->getAttributes()->setBinary("param_id", &param_id,
-                                      sizeof(param_id));
-
-      msg->getAttributes()->setBinary("data", &value, sizeof(value));
-
-      controller->sendMessage(msg);
-
-      msg->release();
-    };
-
-    const auto send_plain_double_change = [&controller](const ParamID param_id,
-                                                        const double value) {
-      auto* const msg = controller->allocateMessage();
-
-      msg->setMessageID("plain_param_change");
-
-      msg->getAttributes()->setBinary("param_id", &param_id,
-                                      sizeof(param_id));
-
-      msg->getAttributes()->setBinary("data", &value, sizeof(value));
-
-      controller->sendMessage(msg);
-
-      msg->release();
-    };
-
     const auto& voice_param = common::kSchema.GetParameter(voice_param_id);
 
     const auto* const list_param =
@@ -840,16 +794,12 @@ void Editor::valueChanged(CControl* const pControl) {
     hidden_voice_control->setValue(static_cast<float>(plain_value));
     hidden_voice_control->setDirty();
 
-    // ホスト/DAWの通常パラメータ経路を維持する。
+    // 正規のVSTパラメータ変更経路を通す。
+    // ProcessorへはHost経由のIParameterChangesとして届く想定。
     communicate(voice_vst_param_id, normalized_value);
 
-    // Processorへplain値も直接送る。
-    // 一部ホストでperformEdit経由のkVoiceがProcessorへ届かない場合でも、
-    // Processor側のSetTargetSpeaker(value)を確実に実行するため。
-    send_plain_int_change(voice_vst_param_id, plain_value);
-
     // Voice変更に連動して変わるPitchShift / AverageSourcePitch等も、
-    // 通常パラメータ経路とplain値直接通知の両方でProcessorへ同期する。
+    // 元のCOptionMenu分岐と同じ処理順でホストへ通知する。
     for (const auto& changed_param_id : core.updated_parameters_) {
       const auto changed_vst_param_id = static_cast<ParamID>(changed_param_id);
 
@@ -860,25 +810,17 @@ void Editor::valueChanged(CControl* const pControl) {
 
       if (const auto* const num_param =
               std::get_if<common::NumberParameter>(&changed_param)) {
-        const auto plain_changed_value = std::get<double>(value);
+        const auto normalized_changed_value =
+            Normalize(*num_param, std::get<double>(value));
 
-        const auto changed_normalized_value =
-            Normalize(*num_param, plain_changed_value);
-
-        communicate(changed_vst_param_id, changed_normalized_value);
-
-        send_plain_double_change(changed_vst_param_id, plain_changed_value);
+        communicate(changed_vst_param_id, normalized_changed_value);
 
       } else if (const auto* const changed_list_param =
                      std::get_if<common::ListParameter>(&changed_param)) {
-        const auto plain_changed_value = std::get<int>(value);
+        const auto normalized_changed_value =
+            Normalize(*changed_list_param, std::get<int>(value));
 
-        const auto changed_normalized_value =
-            Normalize(*changed_list_param, plain_changed_value);
-
-        communicate(changed_vst_param_id, changed_normalized_value);
-
-        send_plain_int_change(changed_vst_param_id, plain_changed_value);
+        communicate(changed_vst_param_id, normalized_changed_value);
 
       } else if (std::get_if<common::StringParameter>(&changed_param)) {
         assert(false);
