@@ -2,6 +2,8 @@
 
 [Beatrice 2](https://prj-beatrice.com) の公式 VST のGUIを自分好みに改造する
 
+プルダウンメニューではなくボタンを押してVoiceを選択するようにした
+
 Custom GUI build:
 - Voice selector changed from dropdown to vertical buttons
 - Description moved below portrait
